@@ -16,7 +16,15 @@ class Relay(private val settings: Settings, allowLocalHttp: Boolean) {
         return wireJson.decodeFromString(get("/v1/events/$normalized"))
     }
 
-    private fun get(path: String): String {
+    fun inboxChanges(after: Long): MailChanges =
+        wireJson.decodeFromString(get("/v1/inbox/changes?after=$after&limit=50"))
+
+    fun apply(action: MailAction): MailState =
+        wireJson.decodeFromString(get("/v1/inbox/actions", wireJson.encodeToString(action)))
+
+    class HttpError(val code: Int) : IOException("Relay HTTP $code")
+
+    private fun get(path: String, body: String? = null): String {
         val request = URI.create(base + path).toURL().openConnection() as HttpURLConnection
         try {
             request.connectTimeout = 4_000
@@ -24,8 +32,16 @@ class Relay(private val settings: Settings, allowLocalHttp: Boolean) {
             request.instanceFollowRedirects = false
             request.setRequestProperty("Authorization", "Bearer " + settings.token)
             request.setRequestProperty("Accept", "application/json")
+            if (body != null) {
+                request.requestMethod = "POST"
+                request.doOutput = true
+                request.setRequestProperty("Content-Type", "application/json")
+                val bytes = body.toByteArray(Charsets.UTF_8)
+                request.setFixedLengthStreamingMode(bytes.size)
+                request.outputStream.use { it.write(bytes) }
+            }
             val code = request.responseCode
-            if (code != HttpURLConnection.HTTP_OK) throw IOException("Relay HTTP $code")
+            if (code != HttpURLConnection.HTTP_OK) throw HttpError(code)
             return request.inputStream.use { input ->
                 val output = ByteArrayOutputStream()
                 val buffer = ByteArray(8192)

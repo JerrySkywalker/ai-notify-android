@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.annotation.StringRes
 import androidx.core.net.toUri
 import android.os.Build
 import android.os.IBinder
@@ -33,45 +34,59 @@ private const val RECEIVER_CHANNEL = "ainotify_connection"
 private const val REPLY_CHANNEL = "ainotify_replies"
 private const val SERVICE_ID = 9001
 
-object Phone {
+internal enum class ReceiverStatus(@get:StringRes val label: Int) {
+    OFF(R.string.receiver_off), STARTING(R.string.receiver_starting), LISTENING(R.string.receiver_on),
+    WEAR(R.string.receiver_wear), RETRY(R.string.receiver_retry),
+}
+
+internal object Phone {
     @Volatile private var store: Inbox? = null
-    val status = MutableStateFlow("Receiver off")
+    @Volatile private var actions: PhoneWorkspace? = null
+    val status = MutableStateFlow(ReceiverStatus.OFF)
+
+    @Synchronized fun workspace(context: Context): PhoneWorkspace =
+        actions ?: PhoneWorkspace(context.applicationContext).also { actions = it }
 
     @Synchronized fun inbox(context: Context): Inbox =
-        store ?: Inbox(context.applicationContext).also { store = it }
+        store ?: Inbox(context.applicationContext, fullHistory = true).also { store = it }
 }
 
 class ReceiveService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
+    private val localized get() = Preferences.localized(this)
     private val notifications get() = getSystemService(NotificationManager::class.java)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         notifications.createNotificationChannel(
-            NotificationChannel(RECEIVER_CHANNEL, "Relay connection", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(RECEIVER_CHANNEL, localized.getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW),
         )
         notifications.createNotificationChannel(
-            NotificationChannel(REPLY_CHANNEL, "AI replies", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(REPLY_CHANNEL, localized.getString(R.string.channel_replies), NotificationManager.IMPORTANCE_DEFAULT),
         )
         startForeground(
             SERVICE_ID,
             Notification.Builder(this, RECEIVER_CHANNEL)
-                .setContentTitle("AINotify is listening")
-                .setContentText("Messages are fetched from your relay")
+                .setContentTitle(localized.getString(R.string.notification_listening))
+                .setContentText(localized.getString(R.string.notification_connection))
                 .setContentIntent(openIntent(null))
                 .setOngoing(true)
                 .setLocalOnly(true)
                 .setSmallIcon(R.drawable.ic_notify)
                 .build(),
         )
-        if (job?.isActive != true) job = scope.launch { receive() }
+        if (job?.isActive != true) {
+            Phone.status.value = ReceiverStatus.STARTING
+            job = scope.launch { receive() }
+        }
         return START_NOT_STICKY
     }
 
     private suspend fun receive() {
         val inbox = Phone.inbox(this)
+        val workspace = Phone.workspace(this)
         var wearCursor = -1L
         var wearNodes = 0
         var previousSettings = inbox.settings()
@@ -86,7 +101,8 @@ class ReceiveService : Service() {
                 previousSettings = settings
             }
             try {
-                val feed = Relay(settings, BuildConfig.DEBUG).feed(inbox.mailbox.value.cursor)
+                val relay = Relay(settings, BuildConfig.DEBUG)
+                val feed = relay.feed(inbox.mailbox.value.cursor)
                 val fresh = inbox.merge(feed, settings)
                 fresh.takeLast(5).forEach(::notifyReply)
                 val mailbox = inbox.mailbox.value
@@ -96,12 +112,13 @@ class ReceiveService : Service() {
                     if (sent == true) wearCursor = mailbox.cursor
                 }
                 wearNodes = nodes
-                Phone.status.value = if (nodes > 0) "Listening · Wear OS connected" else "Listening · No paired watch node"
+                workspace.sync(settings.relay, relay) { inbox.settings() == settings }
+                Phone.status.value = if (nodes > 0) ReceiverStatus.WEAR else ReceiverStatus.LISTENING
                 if (feed.events.size == 50) continue
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                Phone.status.value = "Relay connection unavailable · retrying"
+                Phone.status.value = ReceiverStatus.RETRY
             }
             delay(2_000)
         }
@@ -117,7 +134,7 @@ class ReceiveService : Service() {
 
     private fun notifyReply(entry: Entry) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val preview = entry.preview ?: entry.statusLabel
+        val preview = entry.preview ?: localized.getString(if (entry.kind == "test") R.string.test_message else R.string.reply_complete)
         notifications.notify(
             entry.id, 1,
             Notification.Builder(this, REPLY_CHANNEL)
@@ -148,7 +165,7 @@ class ReceiveService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
-        Phone.status.value = "Receiver off"
+        Phone.status.value = ReceiverStatus.OFF
         super.onDestroy()
     }
 }

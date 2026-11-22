@@ -2,7 +2,7 @@
 
 One Gradle project builds a phone inbox and a watch companion.
 
-- Phone: Add the relay URL and reader token. Enable receiving. Tap a reply notification to read the entire stored message.
+- Phone: Add the relay URL and an inbox or reader token. Enable receiving. Tap a reply notification to read the entire stored message.
 - Wear OS: In paired mode the phone passes recent reply previews through the Wearable Data Layer. Both APKs must use the same application ID and signing key. The watch app posts its own notifications.
 - Wear OS direct mode: Enter the relay URL and reader token from **Relay settings** on the watch. The watch uses the same foreground receiver as the phone. To return to paired mode, select **Use phone**.
 
@@ -19,3 +19,11 @@ Use JDK 17, Android Platform 36, Build Tools 36.0.0 and two Android Studio AVDs.
 The debug packages use `io.github.jerryskywalker.ainotify.dev` and allow HTTP only on emulator or loopback host addresses. Release builds require HTTPS. APKs are in the individual module's `build/outputs/apk/debug/` directories. Run the AINotify entry repository's local CI for the two-AVD end-to-end check.
 
 The Gradle project layout was adapted from Token Monitor Companion.
+
+## Phone inbox
+
+Use the device and AI frontend chips to narrow the inbox. Create device groups in Settings and combine them with individual devices. Swipe left to archive and right to pin by default. Configure the two directions independently in Settings. The reply menu also supports these actions and can restore a reply from Archive or Trash.
+
+An inbox token syncs message actions over the relay. A reader token allows local phone actions. Device groups, filters and setting choices are stored on each phone. Unsent actions using an inbox token are saved locally until the foreground receiver reconnects.
+
+Choose English, Simplified Chinese or Follow system. Use Light, Dark graphite, AMOLED black or Follow system, along with a jade, blue or violet accent.

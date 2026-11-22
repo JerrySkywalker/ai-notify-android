@@ -20,7 +20,7 @@ $env:ANDROID_HOME = $SdkRoot
 $env:JAVA_HOME = $JavaHome
 Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
-    $tasks = @('--console=plain', ':core:testDebugUnitTest', ':mobile:lintDebug', ':wear:lintDebug', ':mobile:assembleDebug', ':wear:assembleDebug')
+    $tasks = @('--console=plain', ':core:testDebugUnitTest', ':mobile:testDebugUnitTest', ':mobile:lintDebug', ':wear:lintDebug', ':mobile:assembleDebug', ':wear:assembleDebug')
     if ($InitScript) { $tasks = @('--init-script', $InitScript) + $tasks }
     if ($Offline) { $tasks = @('--offline') + $tasks }
     & .\gradlew.bat @tasks
