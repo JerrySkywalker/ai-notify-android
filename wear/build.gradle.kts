@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.jerryskywalker.ainotify"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.0"
+        versionCode = 4
+        versionName = "0.2.0"
     }
     buildTypes.getByName("debug").applicationIdSuffix = ".dev"
     buildFeatures {
