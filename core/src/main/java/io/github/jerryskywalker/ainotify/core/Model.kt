@@ -38,14 +38,64 @@ data class Entry(
 }
 
 @Serializable
-data class Feed(val events: List<Entry>, @SerialName("next_cursor") val nextCursor: Long)
+data class Feed(
+    val events: List<Entry>,
+    @SerialName("next_cursor") val nextCursor: Long,
+    @SerialName("stream_id") val streamId: String? = null,
+    @SerialName("reset_cursor") val resetCursor: Boolean = false,
+)
 
 @Serializable
 data class Settings(val relay: String, val token: String)
 
 @Serializable
-data class Mailbox(val cursor: Long = 0, val events: List<Entry> = emptyList(), val relay: String? = null, val fullHistory: Boolean = false, val notifyAfter: Long = 0)
+data class Mailbox(
+    val cursor: Long = 0,
+    val events: List<Entry> = emptyList(),
+    val relay: String? = null,
+    val fullHistory: Boolean = false,
+    val notifyAfter: Long = 0,
+    @SerialName("stream_id") val streamId: String? = null,
+)
 
 const val WATCH_PATH = "/ainotify/v1/inbox"
 const val WATCH_PAYLOAD = "preview_json"
 const val EVENT_EXTRA = "ainotify_event"
+
+@Serializable
+data class DeviceRegistration(
+    val token: String,
+    @SerialName("device_type") val deviceType: String = "android",
+    @SerialName("app_id") val appId: String = "io.github.jerryskywalker.ainotify",
+)
+
+@Serializable
+data class DeviceUnregistration(
+    val token: String,
+)
+
+@Serializable
+data class PushDevice(
+    val token: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("device_type") val deviceType: String,
+    @SerialName("app_id") val appId: String,
+    @SerialName("created_at_ms") val createdAt: Long,
+    @SerialName("updated_at_ms") val updatedAt: Long,
+)
+
+@Serializable
+data class PushDevicesResponse(val devices: List<PushDevice>)
+
+@Serializable
+data class PushDelivery(
+    val id: Long,
+    @SerialName("event_id") val eventId: String,
+    val token: String,
+    val status: String,
+    @SerialName("attempted_at_ms") val attemptedAt: Long,
+    val error: String? = null,
+)
+
+@Serializable
+data class PushDeliveriesResponse(val deliveries: List<PushDelivery>)

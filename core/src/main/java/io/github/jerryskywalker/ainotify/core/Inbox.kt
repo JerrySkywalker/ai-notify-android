@@ -10,12 +10,28 @@ import kotlinx.coroutines.flow.asStateFlow
 class Inbox(context: Context, profile: String = "phone", private val fullHistory: Boolean = false) {
     private val settingsFile = AtomicFile(File(context.filesDir, "$profile-settings.json"))
     private val boxFile = AtomicFile(File(context.filesDir, "$profile-inbox.json"))
+    private var lastSettingsModified: Long = settingsFile.baseFile.lastModified()
     private var credentials: Settings? = read(settingsFile)
     private val state = MutableStateFlow(restore())
     val mailbox = state.asStateFlow()
 
     @Synchronized
-    fun settings(): Settings? = credentials
+    fun settings(): Settings? {
+        val modified = settingsFile.baseFile.lastModified()
+        if (modified != lastSettingsModified) {
+            lastSettingsModified = modified
+            val disk = read<Settings>(settingsFile)
+            if (disk != credentials) {
+                val changedRelay = credentials?.relay != disk?.relay
+                credentials = disk
+                if (changedRelay) {
+                    boxFile.delete()
+                    state.value = restore()
+                }
+            }
+        }
+        return credentials
+    }
 
     @Synchronized
     fun saveSettings(settings: Settings?) {
@@ -24,6 +40,7 @@ class Inbox(context: Context, profile: String = "phone", private val fullHistory
         if (settings == null) settingsFile.delete()
         else write(settingsFile, wireJson.encodeToString(settings))
         credentials = settings
+        lastSettingsModified = settingsFile.baseFile.lastModified()
         if (changedRelay) {
             boxFile.delete()
             state.value = Mailbox(fullHistory = fullHistory)
@@ -34,12 +51,7 @@ class Inbox(context: Context, profile: String = "phone", private val fullHistory
     fun merge(feed: Feed, expectedSettings: Settings? = settings()): List<Entry> {
         if (credentials != expectedSettings) return emptyList()
         val before = state.value
-        val known = before.events.associateBy { it.id }
-        val received = feed.events.distinctBy { it.id }.filter { it.id !in known && it.seq > before.cursor }
-        val fresh = received.filter { it.seq > before.notifyAfter }
-        val sorted = (before.events + received).sortedByDescending { it.seq }
-        val combined = if (fullHistory) sorted else sorted.take(100)
-        val next = before.copy(cursor = maxOf(before.cursor, feed.nextCursor), events = combined, relay = credentials?.relay)
+        val (next, fresh) = before.mergeFeed(feed, credentials?.relay)
         if (next != before) {
             write(boxFile, wireJson.encodeToString(next))
             state.value = next
@@ -74,4 +86,24 @@ class Inbox(context: Context, profile: String = "phone", private val fullHistory
             throw error
         }
     }
+}
+
+internal fun Mailbox.mergeFeed(feed: Feed, relay: String?): Pair<Mailbox, List<Entry>> {
+    val seen = events.mapTo(hashSetOf()) { it.id }
+    val changedStream = streamId != null && feed.streamId != null && feed.streamId != streamId
+    // An unscoped paired cache can keep its history when the snapshot shares event IDs with it.
+    val unrecognizedPairedStream = relay == null && streamId == null && feed.streamId != null &&
+        events.isNotEmpty() && feed.events.none { it.id in seen }
+    val reset = feed.resetCursor || changedStream || unrecognizedPairedStream
+    val before = if (reset) Mailbox(fullHistory = fullHistory) else this
+    val received = feed.events.distinctBy { it.id }.filter { it.seq > before.cursor && (reset || it.id !in seen) }
+    val fresh = received.filter { it.seq > before.notifyAfter && it.id !in seen }
+    val sorted = (before.events + received).sortedByDescending { it.seq }
+    val next = before.copy(
+        cursor = maxOf(before.cursor, feed.nextCursor),
+        events = if (fullHistory) sorted else sorted.take(100),
+        relay = relay,
+        streamId = feed.streamId ?: before.streamId,
+    )
+    return next to fresh
 }

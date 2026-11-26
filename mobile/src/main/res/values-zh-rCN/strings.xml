@@ -36,6 +36,11 @@
     <string name="receiver_on">正在接收 Relay 消息</string>
     <string name="receiver_wear">正在接收 · 手表已连接</string>
     <string name="receiver_retry">Relay 暂不可用 · 正在重试</string>
+    <string name="receiver_push">待机 · 推送唤醒已开启</string>
+    <string name="push_notifications">后台推送唤醒</string>
+    <string name="push_description">在后台或锁屏休眠时接收即时唤醒</string>
+    <string name="push_status_active">已向 Relay 注册</string>
+    <string name="push_status_inactive">未注册</string>
     <string name="sync_actions">收件箱操作通过 Relay 同步。</string>
     <string name="local_actions">收件箱操作仅保存在本机。输入收件箱令牌可启用同步。</string>
     <string name="pending_sync">待同步</string>

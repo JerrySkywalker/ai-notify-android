@@ -36,6 +36,11 @@
     <string name="receiver_on">Receiving from relay</string>
     <string name="receiver_wear">Receiving · Watch connected</string>
     <string name="receiver_retry">Relay unavailable · Retrying</string>
+    <string name="receiver_push">Standby · Push wakeup active</string>
+    <string name="push_notifications">Push notifications</string>
+    <string name="push_description">Receive instant wakeups in the background or during sleep</string>
+    <string name="push_status_active">Registered with relay</string>
+    <string name="push_status_inactive">Not registered</string>
     <string name="sync_actions">Inbox actions sync through your relay.</string>
     <string name="local_actions">Inbox actions apply only on this phone. Enter an inbox token to enable sync.</string>
     <string name="pending_sync">Pending sync</string>

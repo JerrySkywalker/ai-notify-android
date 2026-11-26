@@ -1,22 +1,14 @@
 package io.github.jerryskywalker.ainotify.mobile
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import androidx.annotation.StringRes
-import androidx.core.net.toUri
-import android.os.Build
 import android.os.IBinder
-import io.github.jerryskywalker.ainotify.core.EVENT_EXTRA
-import io.github.jerryskywalker.ainotify.core.Entry
+import androidx.annotation.StringRes
 import io.github.jerryskywalker.ainotify.core.Inbox
-import io.github.jerryskywalker.ainotify.core.Relay
 import io.github.jerryskywalker.ainotify.core.pairedNodeCount
 import io.github.jerryskywalker.ainotify.core.sendWearPreview
 import kotlinx.coroutines.CancellationException
@@ -30,13 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-private const val RECEIVER_CHANNEL = "ainotify_connection"
-private const val REPLY_CHANNEL = "ainotify_replies"
-private const val SERVICE_ID = 9001
-
 internal enum class ReceiverStatus(@get:StringRes val label: Int) {
     OFF(R.string.receiver_off), STARTING(R.string.receiver_starting), LISTENING(R.string.receiver_on),
-    WEAR(R.string.receiver_wear), RETRY(R.string.receiver_retry),
+    WEAR(R.string.receiver_wear), RETRY(R.string.receiver_retry), PUSH(R.string.receiver_push),
 }
 
 internal object Phone {
@@ -49,6 +37,14 @@ internal object Phone {
 
     @Synchronized fun inbox(context: Context): Inbox =
         store ?: Inbox(context.applicationContext, fullHistory = true).also { store = it }
+
+    fun updatePushStatus(context: Context) {
+        if (status.value == ReceiverStatus.OFF && Preferences(context).current.value.pushEnabled) {
+            status.value = ReceiverStatus.PUSH
+        } else if (status.value == ReceiverStatus.PUSH && !Preferences(context).current.value.pushEnabled) {
+            status.value = ReceiverStatus.OFF
+        }
+    }
 }
 
 class ReceiveService : Service() {
@@ -71,7 +67,7 @@ class ReceiveService : Service() {
             Notification.Builder(this, RECEIVER_CHANNEL)
                 .setContentTitle(localized.getString(R.string.notification_listening))
                 .setContentText(localized.getString(R.string.notification_connection))
-                .setContentIntent(openIntent(null))
+                .setContentIntent(openIntent(this, null))
                 .setOngoing(true)
                 .setLocalOnly(true)
                 .setSmallIcon(R.drawable.ic_notify)
@@ -85,40 +81,22 @@ class ReceiveService : Service() {
     }
 
     private suspend fun receive() {
-        val inbox = Phone.inbox(this)
-        val workspace = Phone.workspace(this)
-        var wearCursor = -1L
-        var wearNodes = 0
-        var previousSettings = inbox.settings()
         while (true) {
-            val settings = inbox.settings()
-            if (settings == null) {
-                stopSelf()
-                return
-            }
-            if (settings != previousSettings) {
-                wearCursor = -1
-                previousSettings = settings
-            }
-            try {
-                val relay = Relay(settings, BuildConfig.DEBUG)
-                val feed = relay.feed(inbox.mailbox.value.cursor)
-                val fresh = inbox.merge(feed, settings)
-                fresh.takeLast(5).forEach(::notifyReply)
-                val mailbox = inbox.mailbox.value
-                val nodes = withTimeoutOrNull(800) { wearable { pairedNodeCount(this@ReceiveService) } } ?: 0
-                if (nodes > 0 && (wearCursor != mailbox.cursor || wearNodes == 0)) {
-                    val sent = withTimeoutOrNull(1200) { wearable { sendWearPreview(this@ReceiveService, mailbox); true } }
-                    if (sent == true) wearCursor = mailbox.cursor
+            when (PhoneSync.performSync(this@ReceiveService, notify = true)) {
+                is SyncResult.Success -> {
+                    val nodes = withTimeoutOrNull(1_500) { wearable { pairedNodeCount(this@ReceiveService) } } ?: 0
+                    Phone.status.value = if (nodes > 0) ReceiverStatus.WEAR else ReceiverStatus.LISTENING
                 }
-                wearNodes = nodes
-                workspace.sync(settings.relay, relay) { inbox.settings() == settings }
-                Phone.status.value = if (nodes > 0) ReceiverStatus.WEAR else ReceiverStatus.LISTENING
-                if (feed.events.size == 50) continue
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                Phone.status.value = ReceiverStatus.RETRY
+                is SyncResult.NoSettings -> {
+                    stopSelf()
+                    return
+                }
+                is SyncResult.SettingsChanged -> {
+                    continue
+                }
+                is SyncResult.Failed -> {
+                    Phone.status.value = ReceiverStatus.RETRY
+                }
             }
             delay(2_000)
         }
@@ -132,40 +110,14 @@ class ReceiveService : Service() {
         null
     }
 
-    private fun notifyReply(entry: Entry) {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val preview = entry.preview ?: localized.getString(if (entry.kind == "test") R.string.test_message else R.string.reply_complete)
-        notifications.notify(
-            entry.id, 1,
-            Notification.Builder(this, REPLY_CHANNEL)
-                .setSmallIcon(R.drawable.ic_notify)
-                .setContentTitle(entry.heading)
-                .setContentText(preview)
-                .setStyle(Notification.BigTextStyle().bigText(preview))
-                .setContentIntent(openIntent(entry.id))
-                .setVisibility(Notification.VISIBILITY_PRIVATE)
-                .setLocalOnly(true)
-                .setAutoCancel(true)
-                .build(),
-        )
-    }
-
-    private fun openIntent(id: String?): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java)
-        if (id != null) {
-            intent.data = "ainotify://event/$id".toUri()
-            intent.putExtra(EVENT_EXTRA, id)
-        }
-        return PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
-
     override fun onTimeout(startId: Int, fgsType: Int) {
         stopSelf()
     }
 
     override fun onDestroy() {
         scope.cancel()
-        Phone.status.value = ReceiverStatus.OFF
+        val pushActive = Preferences(this).current.value.pushEnabled
+        Phone.status.value = if (pushActive) ReceiverStatus.PUSH else ReceiverStatus.OFF
         super.onDestroy()
     }
 }

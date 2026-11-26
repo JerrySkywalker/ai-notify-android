@@ -31,6 +31,11 @@ internal data class PhonePreferences(
     val accent: Accent = Accent.JADE,
     val left: SwipeAction = SwipeAction.ARCHIVE,
     val right: SwipeAction = SwipeAction.PIN,
+    val pushEnabled: Boolean = false,
+    val pushToken: String? = null,
+    val fcmEnabled: Boolean = false,
+    val fcmToken: String? = null,
+    val fcmFid: String? = null,
 )
 
 internal class Preferences(context: Context) {
@@ -41,6 +46,11 @@ internal class Preferences(context: Context) {
             storage.choice("accent", Accent.JADE),
             storage.choice("left", SwipeAction.ARCHIVE),
             storage.choice("right", SwipeAction.PIN),
+            storage.getBoolean("push_enabled", false),
+            storage.getString("push_token", null),
+            storage.getBoolean("fcm_enabled", false),
+            storage.getString("fcm_token", null),
+            storage.getString("fcm_fid", null),
         ),
     )
     val current = state.asStateFlow()
@@ -52,8 +62,21 @@ internal class Preferences(context: Context) {
             putString("accent", next.accent.name)
             putString("left", next.left.name)
             putString("right", next.right.name)
+            putBoolean("push_enabled", next.pushEnabled)
+            putString("push_token", next.pushToken)
+            putBoolean("fcm_enabled", next.fcmEnabled)
+            putString("fcm_token", next.fcmToken)
+            putString("fcm_fid", next.fcmFid)
         }
         state.value = next
+    }
+
+    fun getOrCreatePushToken(): String {
+        val existing = state.value.pushToken
+        if (!existing.isNullOrBlank()) return existing
+        val created = java.util.UUID.randomUUID().toString()
+        update { it.copy(pushToken = created) }
+        return created
     }
 
     companion object {

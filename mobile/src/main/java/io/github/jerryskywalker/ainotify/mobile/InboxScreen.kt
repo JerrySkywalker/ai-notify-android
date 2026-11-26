@@ -33,6 +33,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -135,15 +136,27 @@ internal fun InboxScreen(
         }
         val undo = inverse ?: return
         val applied = change ?: return
+        android.util.Log.i("AINotifyUndo", "submit queued change: $applied, undo: $undo")
         snackbar.currentSnackbarData?.dismiss()
         scope.launch {
-            if (snackbar.showSnackbar(context.getString(action.feedback), context.getString(R.string.undo), withDismissAction = true) == SnackbarResult.ActionPerformed) {
+            val result = snackbar.showSnackbar(
+                message = context.getString(action.feedback),
+                actionLabel = context.getString(R.string.undo),
+                withDismissAction = true,
+                duration = SnackbarDuration.Long,
+            )
+            android.util.Log.i("AINotifyUndo", "showSnackbar result: $result")
+            if (result == SnackbarResult.ActionPerformed) {
                 try {
                     update { latest ->
                         val current = latest.state(id)
                         val stillApplied = (applied.folder == null || applied.folder == current.folder) &&
                             (applied.pinned == null || applied.pinned == current.pinned)
-                        if (stillApplied) latest.queue(undo) else latest
+                        android.util.Log.i("AINotifyUndo", "stillApplied: $stillApplied, applied: $applied, current: $current")
+                        if (stillApplied) {
+                            android.util.Log.i("AINotifyUndo", "Queuing undo: $undo")
+                            latest.queue(undo)
+                        } else latest
                     }
                 } catch (_: java.io.IOException) {
                     snackbar.showSnackbar(context.getString(R.string.settings_saved_error))
@@ -195,14 +208,14 @@ internal fun InboxScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val live = status == ReceiverStatus.LISTENING || status == ReceiverStatus.WEAR
+                val live = status == ReceiverStatus.LISTENING || status == ReceiverStatus.WEAR || status == ReceiverStatus.PUSH
                 val scheme = MaterialTheme.colorScheme
                 Box(Modifier.size(7.dp).clip(CircleShape).background(if (live) scheme.primary else scheme.outline))
                 Text(
                     stringResource(if (hasRelay) status.label else R.string.no_relay),
                     Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant,
                 )
-                if (hasRelay && status == ReceiverStatus.OFF && shown.isNotEmpty()) {
+                if (hasRelay && (status == ReceiverStatus.OFF || status == ReceiverStatus.PUSH) && shown.isNotEmpty()) {
                     TextButton(onClick = start) { Text(stringResource(R.string.start_receiver)) }
                 }
                 if (workspace.pending.isNotEmpty()) Text(

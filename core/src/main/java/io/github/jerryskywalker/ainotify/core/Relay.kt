@@ -4,12 +4,25 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URLEncoder
 import java.util.UUID
 
 class Relay(private val settings: Settings, allowLocalHttp: Boolean) {
     private val base = validateSettings(settings, allowLocalHttp).relay
 
-    fun feed(after: Long): Feed = wireJson.decodeFromString(get("/v1/events?after=$after&limit=50"))
+    fun feed(mailbox: Mailbox): Feed {
+        val stream = mailbox.streamId
+        // A v0.2.0 cache can identify its cursor by the last event it received.
+        val anchor = if (stream == null && mailbox.cursor > 0) {
+            mailbox.events.firstOrNull { it.seq == mailbox.cursor }?.id
+        } else null
+        val cursorIdentity = when {
+            stream != null -> "&stream_id=" + URLEncoder.encode(stream, Charsets.UTF_8.name())
+            anchor != null -> "&cursor_event_id=" + URLEncoder.encode(anchor, Charsets.UTF_8.name())
+            else -> ""
+        }
+        return wireJson.decodeFromString(get("/v1/events?after=${mailbox.cursor}&limit=50$cursorIdentity"))
+    }
 
     fun detail(id: String): Entry {
         val normalized = UUID.fromString(id).toString()
@@ -21,6 +34,24 @@ class Relay(private val settings: Settings, allowLocalHttp: Boolean) {
 
     fun apply(action: MailAction): MailState =
         wireJson.decodeFromString(get("/v1/inbox/actions", wireJson.encodeToString(action)))
+
+    fun registerDevice(token: String, deviceType: String = "android", appId: String = "io.github.jerryskywalker.ainotify"): Boolean {
+        val payload = wireJson.encodeToString(DeviceRegistration(token, deviceType, appId))
+        get("/v1/devices/register", payload)
+        return true
+    }
+
+    fun unregisterDevice(token: String): Boolean {
+        val payload = wireJson.encodeToString(DeviceUnregistration(token))
+        get("/v1/devices/unregister", payload)
+        return true
+    }
+
+    fun devices(): List<PushDevice> =
+        wireJson.decodeFromString<PushDevicesResponse>(get("/v1/devices")).devices
+
+    fun pushDeliveries(): List<PushDelivery> =
+        wireJson.decodeFromString<PushDeliveriesResponse>(get("/v1/push/deliveries")).deliveries
 
     class HttpError(val code: Int) : IOException("Relay HTTP $code")
 

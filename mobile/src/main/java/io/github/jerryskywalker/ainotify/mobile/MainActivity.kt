@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +46,7 @@ import io.github.jerryskywalker.ainotify.core.Settings
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -61,12 +63,21 @@ class MainActivity : ComponentActivity() {
         val inbox = Phone.inbox(this)
         val workspace = Phone.workspace(this)
         val preferences = Preferences(this)
+        Phone.updatePushStatus(this)
         startIfRequested(intent, inbox)
         setContent {
             val prefs by preferences.current.collectAsState()
             PhoneTheme(prefs, ::setLightBars) {
                 App(inbox, workspace, preferences, prefs, selected, { selected = it }, ::startReceiver, ::stopReceiver)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Phone.updatePushStatus(this)
+        lifecycleScope.launch(Dispatchers.IO) {
+            PhoneSync.performSync(this@MainActivity, notify = false)
         }
     }
 
@@ -93,9 +104,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun eventId(intent: Intent): String? = intent.getStringExtra(EVENT_EXTRA)?.let {
-        runCatching { UUID.fromString(it).toString() }.getOrNull()
-    }
+    private fun eventId(intent: Intent): String? =
+        (intent.getStringExtra(EVENT_EXTRA) ?: intent.data?.lastPathSegment)?.let {
+            runCatching { UUID.fromString(it).toString() }.getOrNull()
+        }
 
     private fun startReceiver() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -106,6 +118,7 @@ class MainActivity : ComponentActivity() {
 
     private fun stopReceiver() {
         stopService(Intent(this, ReceiveService::class.java))
+        Phone.updatePushStatus(this)
     }
 }
 

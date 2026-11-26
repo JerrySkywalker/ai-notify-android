@@ -47,15 +47,24 @@ object Watch {
 
 class PhoneListener : WearableListenerService() {
     override fun onDataChanged(events: DataEventBuffer) {
+        android.util.Log.i("AINotifyWatch", "onDataChanged received ${events.count} events")
         val inbox = Watch.inbox(this)
-        if (inbox.settings() != null) return
+        if (inbox.settings() != null) {
+            android.util.Log.i("AINotifyWatch", "ignoring because settings() != null")
+            return
+        }
         for (event in events) {
+            android.util.Log.i("AINotifyWatch", "event type=${event.type} uri=${event.dataItem.uri.path}")
             if (event.type != DataEvent.TYPE_CHANGED || event.dataItem.uri.path != WATCH_PATH) continue
-            runCatching {
-                val payload = DataMapItem.fromDataItem(event.dataItem).dataMap.getString(WATCH_PAYLOAD) ?: return@runCatching
+            try {
+                val payload = DataMapItem.fromDataItem(event.dataItem).dataMap.getString(WATCH_PAYLOAD) ?: continue
                 val feed = wireJson.decodeFromString<Feed>(payload)
-                inbox.merge(feed, null).sortedBy { it.seq }.takeLast(3).forEach { notifyReply(this, it) }
+                val fresh = inbox.merge(feed, null)
+                android.util.Log.i("AINotifyWatch", "merged feed: events=${feed.events.size} cursor=${feed.nextCursor} fresh=${fresh.size}")
+                fresh.sortedBy { it.seq }.takeLast(3).forEach { notifyReply(this, it) }
                 if (inbox.settings() == null) Watch.status.value = "Synced from phone"
+            } catch (e: Exception) {
+                android.util.Log.w("AINotifyWatch", "error handling data event: ${e.message}", e)
             }
         }
     }
@@ -94,7 +103,7 @@ class DirectReceiver : Service() {
                 return
             }
             try {
-                val feed = Relay(settings, BuildConfig.DEBUG).feed(inbox.mailbox.value.cursor)
+                val feed = Relay(settings, BuildConfig.DEBUG).feed(inbox.mailbox.value)
                 inbox.merge(feed, settings).takeLast(3).forEach { notifyReply(this, it) }
                 Watch.status.value = "Relay connected"
                 if (feed.events.size == 50) continue

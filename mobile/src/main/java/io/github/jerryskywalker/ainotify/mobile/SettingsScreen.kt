@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,6 +43,8 @@ import io.github.jerryskywalker.ainotify.core.Entry
 import io.github.jerryskywalker.ainotify.core.MailState
 import io.github.jerryskywalker.ainotify.core.Settings
 import io.github.jerryskywalker.ainotify.core.validateSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,6 +62,7 @@ internal fun SettingsScreen(
     back: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val language = Preferences.language(context)
     var relayOpen by rememberSaveable { mutableStateOf(settings == null) }
     var groupId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -118,7 +122,7 @@ internal fun SettingsScreen(
                 Text(settings?.relay ?: stringResource(R.string.relay_settings))
             }
             if (settings != null) {
-                val off = status == ReceiverStatus.OFF
+                val off = status == ReceiverStatus.OFF || status == ReceiverStatus.PUSH
                 TextButton(onClick = if (off) start else stop) {
                     Text(stringResource(if (off) R.string.start_receiver else R.string.stop_receiver))
                 }
@@ -127,8 +131,53 @@ internal fun SettingsScreen(
                     SyncMode.LOCAL -> R.string.local_actions
                     SyncMode.UNKNOWN -> null
                 }
-                mode?.let { Text(stringResource(it), Modifier.padding(start = 12.dp, bottom = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                mode?.let { Text(stringResource(it), Modifier.padding(start = 12.dp, bottom = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            SettingsHeading(R.string.push_notifications)
+            CheckRow(
+                title = stringResource(R.string.push_notifications),
+                checked = prefs.pushEnabled,
+                supporting = stringResource(if (prefs.pushEnabled) R.string.push_status_active else R.string.push_status_inactive),
+            ) {
+                val willEnable = !prefs.pushEnabled
+                scope.launch(Dispatchers.IO) {
+                    if (willEnable) {
+                        val fid = FirebaseManager.getInstallationId(context)
+                        val fcmToken = FirebaseManager.getFcmToken(context)
+                        val token = fcmToken ?: preferences.getOrCreatePushToken()
+                        val devType = if (fcmToken != null) "fcm" else "android"
+                        val appId = fid ?: "io.github.jerryskywalker.ainotify"
+                        preferences.update {
+                            it.copy(
+                                pushEnabled = true,
+                                pushToken = token,
+                                fcmEnabled = fcmToken != null,
+                                fcmToken = fcmToken,
+                                fcmFid = fid,
+                            )
+                        }
+                        PhoneSync.registerPushToken(context, token, devType, appId)
+                    } else {
+                        val token = prefs.pushToken ?: preferences.getOrCreatePushToken()
+                        PhoneSync.unregisterPushToken(context, token)
+                        preferences.update {
+                            it.copy(
+                                pushEnabled = false,
+                                fcmEnabled = false,
+                                fcmToken = null,
+                                fcmFid = null,
+                            )
+                        }
+                    }
+                    Phone.updatePushStatus(context)
+                }
+            }
+            Text(
+                stringResource(R.string.push_description),
+                Modifier.padding(start = 12.dp, bottom = 16.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
